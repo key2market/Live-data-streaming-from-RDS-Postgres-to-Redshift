@@ -1,0 +1,247 @@
+Outputs:
+  LambdaFunction:
+    Value: !Ref GetLogicalChangesFunction
+    Description: Lambda function
+  LogsBucket:
+    Value: !Ref LogsBucket
+    Description: Name of s3 bucket
+Parameters:
+  Vpc:
+    Type: AWS::EC2::VPC::Id
+    AllowedPattern: ^(vpc-)([a-z0-9]{8}|[a-z0-9]{17})$
+    Description: The Vpc Id of an existing Vpc.
+  LambdaSubnet0CIDR:
+    AllowedPattern: "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/(1[6-9]|2[0-8]))$"
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Description: CIDR block for lambda subnet 0 located in Availability Zone 0
+    Type: String
+  LambdaSubnet1CIDR:
+    AllowedPattern: "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/(1[6-9]|2[0-8]))$"
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Description: CIDR block for lambda subnet 1 located in Availability Zone 1
+    Type: String
+  AvailabilityZones:
+    Description: 'List of Availability Zones to use for the subnets in the VPC. Note: The logical order is preserved.'
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+  DatabaseSG:
+    Description: The security group of the AWS RDS instance.
+    Type: AWS::EC2::SecurityGroup::Id
+  DatabasePort:
+    Type: String
+    Default: "5432"
+    AllowedPattern: "^[0-9]{1,5}$"
+  DatabaseName:
+    Type: String
+    Description: The name of the database
+  DatabaseHost:
+    Type: String
+    Description: The url of the database
+  DatabaseMasterUsername:
+    Type: String
+    Description: The master username for the database
+  DatabaseMasterPassword:
+    Type: String
+    Description: The master password for the database
+    NoEcho: true
+  LogicalReplicationSlotName:
+    Type: String
+    Description: The name of the logical replication slot
+    AllowedPattern: ^([a-zA-Z0-9_]*)$
+    Default: "test_slot"
+    ConstraintDescription: A combination of uppercase and lower case letters or numbers or underscore
+
+Resources:
+  LambdaSubnet0:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 0, !Ref AvailabilityZones ]
+      CidrBlock: !Ref LambdaSubnet0CIDR
+      Tags:
+        - Key: Name
+          Value: !Join [ '', [ 'LambdaSubnet0 / ', !Ref 'AWS::StackName' ] ]
+        - Key: SubnetType
+          Value: Private
+      VpcId: !Ref Vpc
+
+  LambdaSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 1, !Ref AvailabilityZones ]
+      CidrBlock: !Ref LambdaSubnet1CIDR
+      Tags:
+        - Key: Name
+          Value: !Join [ '', [ 'LambdaSubnet1 / ', !Ref 'AWS::StackName' ] ]
+        - Key: SubnetType
+          Value: Private
+      VpcId: !Ref Vpc
+
+  LambdaRouteTableAssociation0:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref LambdaRouteTable
+      SubnetId: !Ref LambdaSubnet0
+
+  LambdaRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref LambdaRouteTable
+      SubnetId: !Ref LambdaSubnet1
+
+  LambdaRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Join [ '', ['LambdaRouteTable / ', !Ref 'AWS::StackName' ] ]
+        - Key: Network
+          Value: Public
+      VpcId: !Ref Vpc
+
+  S3Endpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - 's3:*'
+            Resource:
+              - !Sub arn:aws:s3:::${LogsBucket}
+              - !Sub arn:aws:s3:::${LogsBucket}/*
+              - arn:aws:s3:::*
+      RouteTableIds:
+        - !Ref LambdaRouteTable
+      ServiceName: !Join 
+        - ''
+        - - com.amazonaws.
+          - !Ref 'AWS::Region'
+          - .s3
+      VpcId: !Ref Vpc
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref Vpc
+      GroupDescription: Allow lambda functions to access AWS RDS database
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          ToPort: !Ref DatabasePort
+          FromPort: !Ref DatabasePort
+          DestinationSecurityGroupId: !Ref DatabaseSG
+        - IpProtocol: tcp
+          ToPort: 443
+          FromPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Join [ '', [!Ref 'AWS::StackName', '-lambda' ] ]
+
+  DatabaseSecurityGroupUpdate:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DatabaseSG
+      IpProtocol: tcp
+      ToPort: !Ref DatabasePort
+      FromPort: !Ref DatabasePort
+      SourceSecurityGroupId: !Ref LambdaSecurityGroup
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+  GetLogicalChangesFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code: "../build/rds-get-changes"   
+      Handler: index.handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Runtime: nodejs8.10
+      Timeout: 10
+      MemorySize: 512
+      Environment:
+        Variables:
+          PGDATABASE: !Ref DatabaseName
+          PGHOST: !Ref DatabaseHost
+          PGPORT: !Ref DatabasePort
+          PGUSER: !Ref DatabaseMasterUsername
+          PGPASSWORD: !Ref DatabaseMasterPassword
+          BUCKETNAME: !Ref LogsBucket
+          SlotName: !Ref LogicalReplicationSlotName
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet0
+          - !Ref LambdaSubnet1
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+
+  ScheduleEvent:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Cloudwatch event to trigger lambda every 5 minutes
+      ScheduleExpression: rate(5 minutes)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt GetLogicalChangesFunction.Arn
+          Id: check-logical-changes
+          Input: !Sub "{ \"slot_name\": \"${LogicalReplicationSlotName}\" }"
+  
+  EventPermision:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref GetLogicalChangesFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduleEvent.Arn
+ 
+  ReplicationSlotFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code: "../build/rds-replication"   
+      Handler: index.handler
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Runtime: nodejs8.10
+      Timeout: 10
+      MemorySize: 512
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet0
+          - !Ref LambdaSubnet1
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+
+  PGReplicationSlot:
+    Type: Custom::PostgresReplicationSlot
+    DependsOn: S3Endpoint
+    Properties:
+      ServiceToken: !GetAtt ReplicationSlotFunction.Arn
+      SlotName: !Ref LogicalReplicationSlotName
+      PGDATABASE: !Ref DatabaseName
+      PGHOST: !Ref DatabaseHost
+      PGPORT: !Ref DatabasePort
+      PGUSER: !Ref DatabaseMasterUsername
+      PGPASSWORD: !Ref DatabaseMasterPassword
+
+  LogsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain

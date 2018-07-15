@@ -1,0 +1,25 @@
+{
+    "name": "testproject",
+    "version": "1.0.0",
+    "description": "",
+    "dependencies": {
+        "aws-sdk": "^2.247.1",
+        "cfn-response-promise": "^1.0.1",
+        "pg": "^7.4.3",
+        "pg-copy-streams": "^1.2.0",
+        "pg-logical-replication": "^1.0.4"
+    },
+    "devDependencies": {
+        "webpack": "^4.11.1",
+        "webpack-cli": "^3.0.2",
+        "@types/pg": "^7.4.9",
+        "@types/node": "^10.3.4",
+        "@types/webpack": "^4.4.1"
+    },
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "webpack": "npx webpack --config webpack.config.js"
+    },
+    "author": "",
+    "license": "ISC"
+}

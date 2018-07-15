@@ -1,0 +1,12 @@
+{
+    "compilerOptions": {
+        "checkJs": true,
+        "lib": [
+            "es2015"
+        ]       
+    },
+    "include": [
+        "src/**/*",
+        "./webpack.config.js"
+    ]
+}
